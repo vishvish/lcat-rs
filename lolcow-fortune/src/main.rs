@@ -18,11 +18,19 @@ struct Opt {
 enum Command {
     /// Cowsay a fortune
     Cowsay {
+        /// Read fortunes from this plain-text fortune file
+        #[clap(value_name = "FORTUNE_FILE")]
+        fortune_file: Option<PathBuf>,
         #[clap(short = 'f', long = "cow-shape", value_enum, default_value = "cow")]
         shape: CowShape,
         #[clap(short = 'W', long = "max-length", default_value = "40")]
         max_length: usize,
-        #[clap(short = 'L', long = "lolcat")]
+        #[clap(
+            long = "no-lolcat",
+            action = clap::ArgAction::SetFalse,
+            default_value_t = true,
+            help = "Disable rainbow coloring"
+        )]
         lolcat: bool,
         #[clap(flatten)]
         rainbow: RainbowCmd,
@@ -168,17 +176,48 @@ fn get_random_quote(cmd_path: Option<String>) -> Result<String, StrfileError> {
     strfile.random_quote()
 }
 
+fn get_random_quote_from_file(path: &PathBuf) -> Result<String, StrfileError> {
+    let contents = std::fs::read_to_string(path).map_err(StrfileError::Open)?;
+    let mut quotes = Vec::new();
+    let mut quote = Vec::new();
+
+    for line in contents.lines() {
+        if line.trim() == "%" {
+            let value = quote.join("\n").trim().to_owned();
+            if !value.is_empty() {
+                quotes.push(value);
+            }
+            quote.clear();
+        } else {
+            quote.push(line);
+        }
+    }
+    let value = quote.join("\n").trim().to_owned();
+    if !value.is_empty() {
+        quotes.push(value);
+    }
+
+    if quotes.is_empty() {
+        return Err(StrfileError::QuoteIndex);
+    }
+    Ok(quotes.swap_remove(fastrand::usize(..quotes.len())))
+}
+
 fn main() -> Result<(), lolcow_fortune::StrfileError> {
     let opt = Opt::parse();
 
     match opt.cmd {
         Command::Cowsay {
+            fortune_file,
             shape,
             max_length,
             lolcat,
             rainbow,
         } => {
-            let quote = get_random_quote(opt.strfiles)?;
+            let quote = match fortune_file {
+                Some(path) => get_random_quote_from_file(&path)?,
+                None => get_random_quote(opt.strfiles)?,
+            };
             let cow = Cow::new(shape, quote, max_length);
             let cow = format!("{cow}\n");
             let stdout = io::stdout();
